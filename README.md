@@ -2,6 +2,8 @@
 
 A searchable window switcher for the [Omarchy](https://omarchy.org/) shell.
 
+![Banner](./public/banner.png)
+
 Omarchy's launcher lists applications you can start. This lists the ones already
 open, and takes you to them.
 
