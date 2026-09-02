@@ -107,9 +107,14 @@ A window class is a launcher detail, so rows are named the way a person would
 name the app:
 
 - A class the desktop database recognises gets that application's name and icon.
-- An Omarchy web app has a class of its own with no `.desktop` entry behind it.
-  It keeps its site as the label, `web.whatsapp.com` for instance, and borrows
-  the icon of the browser hosting it.
+- An Omarchy web app is installed without a `StartupWMClass`, so the desktop
+  database cannot find it by class at all. The site in its window class is
+  matched against the URL in each launcher's `Exec` instead, so WhatsApp is
+  named `WhatsApp` and carries its own icon rather than `web.whatsapp.com` and a
+  placeholder.
+- A web app whose launcher hides the URL behind a handler script has nothing to
+  match on. It keeps its site as the label, `app.hey.com` for instance, and
+  borrows the icon of the browser hosting it.
 - A reverse-DNS class such as `org.omarchy.agent` is named by its last segment.
 
 ## Requirements

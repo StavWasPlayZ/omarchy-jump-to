@@ -67,6 +67,7 @@ Item {
     // cursor to whatever was picked last time instead of the MRU window.
     displayModel.clear()
     if (root.appLibrary) root.appLibrary.refreshIcons()
+    root.indexWebappEntries()
     root.reload()
     root.opened = true
     Qt.callLater(function () { keyCatcher.forceActiveFocus() })
@@ -95,19 +96,54 @@ Item {
 
   // DesktopEntries indexes by StartupWMClass and by id, so most native apps
   // resolve; omarchy web apps get a class of their own with no entry behind
-  // it, and Model.prettyClass names those.
+  // it, and webappEntries covers those.
   function lookupEntry(value) {
     if (!value) return null
     try { return DesktopEntries.heuristicLookup(String(value)) } catch (e) { return null }
   }
 
+  // Site to the .desktop entry that installed it as a web app. omarchy's
+  // installer writes no StartupWMClass, so DesktopEntries files those entries
+  // under nothing a window class can reach; the URL in Exec is the one field
+  // left, and the browser derives the window class from that URL's host, so the
+  // host joins the two.
+  property var webappEntries: ({})
+
+  // Built once per summon, not once per window group: resolveClass runs for
+  // every group and this is a pass over the whole entry list. Rebuilding it on
+  // each summon rather than once at load keeps a web app installed since the
+  // shell started from needing a restart to be named.
+  function indexWebappEntries() {
+    var index = ({})
+    var entries = []
+    try { entries = DesktopEntries.applications.values || [] } catch (e) { entries = [] }
+    for (var i = 0; i < entries.length; i++) {
+      var site = Model.webappLaunchSite(entries[i].execString)
+      // A host can carry more than one installed web app and the class names no
+      // more than the host, so the first entry is the best answer available.
+      if (site && index[site] === undefined) index[site] = entries[i]
+    }
+    root.webappEntries = index
+  }
+
+  // A browser's own entry is filed under its StartupWMClass, "brave-browser",
+  // while a web app's class carries only "brave", so the bare name has to be
+  // tried against the "-browser" form too or this lookup never finds anything.
+  function browserEntry(cls) {
+    var browser = Model.browserOf(cls)
+    if (!browser) return null
+    return root.lookupEntry(browser) || root.lookupEntry(browser + "-browser")
+  }
+
   function resolveClass(cls) {
     var entry = root.lookupEntry(cls)
     if (entry) return { name: entry.name, icon: entry.icon }
+    var webapp = root.webappEntries[Model.webappSite(cls)]
+    if (webapp) return { name: webapp.name, icon: webapp.icon }
     // The browser hosting a web app still gives the row a real icon instead of
     // the generic placeholder, while Model.prettyClass keeps the site as the
     // name.
-    var browser = root.lookupEntry(Model.browserOf(cls))
+    var browser = root.browserEntry(cls)
     if (browser) return { name: "", icon: browser.icon }
     return null
   }

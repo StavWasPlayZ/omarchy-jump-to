@@ -6,23 +6,53 @@
 // Browsers launch web apps under a class of "<browser>-<site>__-<profile>".
 var WEBAPP_CLASS = /^(brave|brave-browser|chromium|google-chrome|chrome|msedge|microsoft-edge|firefox|zen)-(.+?)(?:__.*)?$/
 var PROFILE_SUFFIX = /__-?.*$/
+// omarchy installs a web app as `Exec=omarchy-launch-webapp <url>`, which
+// reaches the browser as `--app=<url>`. Both forms name the URL the browser
+// then builds the window class from; any other Exec launches something that is
+// not a web app and must not be matched against a class.
+var WEBAPP_EXEC = /omarchy-launch-webapp|--app=/
+// Userinfo and port are left out of the capture: the class carries the host on
+// its own.
+var WEBAPP_EXEC_HOST = /https?:\/\/(?:[^\/@\s]*@)?([A-Za-z0-9.-]+)/
 
 function titleCase(value) {
   return String(value).replace(/[-_.]+/g, " ").trim()
     .replace(/\b[a-z]/g, function (c) { return c.toUpperCase() })
 }
 
+// The site a browser wrote into a web-app window class, or "" for every other
+// class including the browser's own windows, whose class carries no site. A dot
+// is what tells the two apart. Lowercased so it can be compared against a host
+// taken from a launcher's URL, which is stored however the user typed it.
+function webappSite(cls) {
+  var webapp = String(cls || "").match(WEBAPP_CLASS)
+  if (!webapp || webapp[2].indexOf(".") === -1) return ""
+  return webapp[2].replace(PROFILE_SUFFIX, "").toLowerCase()
+}
+
+// The site a .desktop entry opens as a web app, or "" for an entry that
+// launches anything else. This is the only field tying an omarchy web app back
+// to its window: the installer writes no StartupWMClass, so the desktop
+// database has no class to index the entry under, while the browser derives the
+// class from this very URL's host.
+function webappLaunchSite(execString) {
+  var value = String(execString || "")
+  if (!WEBAPP_EXEC.test(value)) return ""
+  var url = value.match(WEBAPP_EXEC_HOST)
+  return url ? url[1].toLowerCase() : ""
+}
+
 // The window class is a launcher detail; a switcher should read like the app's
-// name. Only reached when the desktop database has nothing to say about the
-// class, which is the normal case for omarchy web apps: they get a class of
-// their own but no .desktop entry carrying a matching StartupWMClass.
+// name. Only reached when the caller's desktop-entry lookups all came up empty,
+// which for a web app means one whose Exec hides the URL behind a handler
+// script.
 function prettyClass(cls) {
   var value = String(cls || "").trim()
   if (!value) return "Unknown"
-  var webapp = value.match(WEBAPP_CLASS)
   // A web app's class keeps the site in it, and a site reads better as itself
   // than title-cased: "web.whatsapp.com", not "Web Whatsapp Com".
-  if (webapp && webapp[2].indexOf(".") !== -1) return webapp[2].replace(PROFILE_SUFFIX, "")
+  var site = webappSite(value)
+  if (site) return site
   value = value.replace(PROFILE_SUFFIX, "")
   // Reverse-DNS ids (org.omarchy.agent, com.mitchellh.ghostty) name the app in
   // their last segment; anything else is already the name, just punctuated.
