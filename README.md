@@ -7,6 +7,14 @@ A searchable window switcher for the [Omarchy](https://omarchy.org/) shell.
 Omarchy's launcher lists applications you can start. This lists the ones already
 open, and takes you to them.
 
+> [!IMPORTANT]
+> **This project is 100% vibe-coded.**
+>
+> I made a Claude Opus agent make it because I found this feature extremely convenient, and I thought it might for you too.
+> If you don't trust AI code - that's your call and I respect it. Though you should probably not be using Omarchy in that case lmao
+> 
+> The rest of this document is written by it.
+
 ## What it does
 
 The switcher opens on the apps that currently have a window, most recently used
@@ -55,6 +63,8 @@ Committing moves the window, focuses it, and closes the switcher.
 ```bash
 omarchy plugin add https://github.com/StavWasPlayZ/omarchy-jump-to --enable
 ```
+
+### Generic warnings
 
 Omarchy plugins run as unsandboxed code inside the long-lived `omarchy-shell`
 process. Read `JumpTo.qml` and `Model.js` before enabling this or any other
