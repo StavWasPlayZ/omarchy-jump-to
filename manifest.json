@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.cstav.omarchy.plugin.jump-to",
+  "name": "Jump To",
+  "version": "1.0.0",
+  "author": "Stav",
+  "description": "Searchable window switcher: pick an open app, drill into its windows, jump straight to it",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "JumpTo.qml"
+  }
+}
