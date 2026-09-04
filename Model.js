@@ -15,6 +15,45 @@ var WEBAPP_EXEC = /omarchy-launch-webapp|--app=/
 // its own.
 var WEBAPP_EXEC_HOST = /https?:\/\/(?:[^\/@\s]*@)?([A-Za-z0-9.-]+)/
 
+// Bounds on what is taken from the compositor. A client names its own class
+// and title, and every window here ends up as a ListModel row laid out as
+// Text, so neither the number of clients nor the length of a field is left to
+// the session. Past these the switcher is unusable anyway; the shell should
+// not pay for it in memory or layout.
+var MAX_CLIENTS = 1024
+var MAX_FIELD = 512
+// The most a reply worth reading can be: several times what MAX_CLIENTS
+// windows of ordinary size come to. Only a client flooding its own windows
+// with fields at Wayland's 4 KB message cap gets a session past it, and that
+// session is reported as unreadable rather than read.
+var MAX_REPLY_BYTES = MAX_CLIENTS * 8 * 1024
+// Where a window with no place in the focus history sorts: after every one
+// that has.
+var UNRANKED = 99999
+
+// Hyprland writes strings and numbers into these fields; anything else is
+// not a value to display or sort on, so it reads as absent rather than being
+// coerced into one ("[object Object]", or null and "" counting as 0).
+function field(value) {
+  if (typeof value !== "string") return ""
+  var cut = value.slice(0, MAX_FIELD)
+  // A cut through a surrogate pair leaves a lone high surrogate at the end,
+  // which neither renders nor matches what was typed.
+  var last = cut.charCodeAt(cut.length - 1)
+  return (last >= 0xD800 && last <= 0xDBFF) ? cut.slice(0, -1) : cut
+}
+
+function finite(value, fallback) {
+  return typeof value === "number" && isFinite(value) ? value : fallback
+}
+
+// Most recently used first and, among windows with no place in the focus
+// history, the order Hyprland listed them in. The engine's sort is not stable,
+// so a tie left to it would come out differently on every reload.
+function mruOrder(a, b) {
+  return a.history - b.history || a.order - b.order
+}
+
 function titleCase(value) {
   return String(value).replace(/[-_.]+/g, " ").trim()
     .replace(/\b[a-z]/g, function (c) { return c.toUpperCase() })
@@ -69,31 +108,46 @@ function browserOf(cls) {
   return webapp[1]
 }
 
+// null when the reply is not a client list at all: cut off, empty, or not
+// JSON. The caller shows that as the failure it is rather than as a session
+// with no windows.
 function parseClients(raw) {
-  var list = []
-  try { list = JSON.parse(String(raw || "[]")) } catch (e) { return [] }
-  if (!Array.isArray(list)) return []
+  var list
+  try { list = JSON.parse(String(raw || "")) } catch (e) { return null }
+  if (!Array.isArray(list)) return null
 
   var out = []
   for (var i = 0; i < list.length; i++) {
     var c = list[i]
-    if (!c || !c.address) continue
+    if (!c) continue
+    var address = field(c.address)
     // An unmapped client has no surface to focus: Hyprland reports it while a
     // window is being torn down, and jumping to it does nothing.
     if (c.mapped === false) continue
-    var cls = String(c.class || c.initialClass || "")
+    var cls = field(c.class) || field(c.initialClass)
+    var workspace = c.workspace || {}
+    // 0 is the focused window, 1 the one before it, and so on. Absent on old
+    // Hyprland builds, and -1 on a window that has never been focused; both
+    // sort last rather than ahead of everything.
+    var history = finite(c.focusHistoryID, -1)
     out.push({
-      address: String(c.address),
+      order: out.length,
+      address: address,
       cls: cls,
       group: (cls || "unknown").toLowerCase(),
-      title: String(c.title || ""),
-      workspace: (c.workspace && c.workspace.name !== undefined) ? String(c.workspace.name) : "",
-      workspaceId: (c.workspace && c.workspace.id !== undefined) ? Number(c.workspace.id) : 0,
+      title: field(c.title),
+      workspace: field(workspace.name),
+      workspaceId: finite(workspace.id, 0),
       floating: c.floating === true,
-      // 0 is the focused window, 1 the one before it, and so on. Absent on old
-      // Hyprland builds; sort those last rather than ahead of everything.
-      history: (c.focusHistoryID === undefined) ? 99999 : Number(c.focusHistoryID)
+      history: history >= 0 ? history : UNRANKED
     })
+  }
+  // hyprctl lists windows in creation order, so a cut at the cap would drop
+  // the newest, most recently used ones: keep the cap's worth of most recently
+  // used instead.
+  if (out.length > MAX_CLIENTS) {
+    out.sort(mruOrder)
+    out.length = MAX_CLIENTS
   }
   return out
 }
@@ -102,7 +156,10 @@ function parseClients(raw) {
 // { name, icon } for a class it recognises, or null. Groups and the windows
 // inside them come back in most-recently-used order.
 function buildGroups(windows, resolve) {
-  var byKey = ({})
+  // A class is whatever the client says it is, so the keys go into an object
+  // with no prototype: on a plain one, "__proto__" or "constructor" would find
+  // an inherited property first and the group behind it would never be built.
+  var byKey = Object.create(null)
   var order = []
   for (var i = 0; i < windows.length; i++) {
     var w = windows[i]
@@ -116,14 +173,15 @@ function buildGroups(windows, resolve) {
   var groups = []
   for (var j = 0; j < order.length; j++) {
     var g = byKey[order[j]]
-    g.windows.sort(function (a, b) { return a.history - b.history })
+    g.windows.sort(mruOrder)
     var meta = resolve ? resolve(g.cls) : null
     g.label = (meta && meta.name) ? String(meta.name) : prettyClass(g.cls)
     g.icon = (meta && meta.icon) ? String(meta.icon) : g.cls
     g.history = g.windows[0].history
+    g.order = g.windows[0].order
     groups.push(g)
   }
-  groups.sort(function (a, b) { return a.history - b.history })
+  groups.sort(mruOrder)
   return groups
 }
 
@@ -218,6 +276,7 @@ function searchRows(groups, query) {
       scored.push({
         rank: best,
         history: w.history,
+        order: w.order,
         row: {
           kind: "window",
           key: w.address,
@@ -232,7 +291,7 @@ function searchRows(groups, query) {
   }
   scored.sort(function (a, b) {
     if (b.rank !== a.rank) return b.rank - a.rank
-    return a.history - b.history
+    return mruOrder(a, b)
   })
   var rows = []
   for (var k = 0; k < scored.length; k++) rows.push(scored[k].row)

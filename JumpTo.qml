@@ -62,6 +62,8 @@ Item {
     root.activeGroup = ""
     root.cancelMove()
     root.cursorActive = true
+    root.loadFailed = false
+    root.summonSerial++
     // Drop the rows from the previous summon: this plugin is keepLoaded, and
     // rebuildDisplay's selection-preserving pass would otherwise restore the
     // cursor to whatever was picked last time instead of the MRU window.
@@ -89,9 +91,44 @@ Item {
 
   // ------------------------------------------------------------------ data
 
+  // One run at a time. A reload while one is out queues a single rerun behind
+  // it rather than killing it: the reply is usually on its way, and a killed
+  // run would still hand its partial stdout to onExited while the hyprctl
+  // behind the bash wrapper ran on regardless.
+  property bool reloadPending: false
+  // A run answers the summon it was started under. One still out from before
+  // this summon describes the session as it was then, and open() has queued a
+  // rerun for now, so its reply is left unapplied.
+  property int summonSerial: 0
+  property bool awaitingReply: false
+
   function reload() {
-    clientsProc.running = false
+    if (clientsProc.running) { root.reloadPending = true; return }
+    root.startClients()
+  }
+
+  function startClients() {
+    clientsProc.serial = root.summonSerial
+    root.awaitingReply = true
     clientsProc.running = true
+  }
+
+  function finishClients(raw, exitCode, exitStatus) {
+    root.awaitingReply = false
+    if (clientsProc.serial === root.summonSerial) root.applyClients(raw, exitCode, exitStatus)
+    if (root.reloadPending) {
+      root.reloadPending = false
+      root.startClients()
+    }
+  }
+
+  // A run that could not start at all (no bash, a fork failing) is reported
+  // only as running flipping back to false, never as exited, and would leave
+  // the overlay waiting on an answer that is not coming. Checked a beat later
+  // so a normal exit, whichever order its signals arrive in, has been handled
+  // first.
+  function checkClientsStarted() {
+    if (!clientsProc.running && root.awaitingReply) root.finishClients("", -1, 0)
   }
 
   // DesktopEntries indexes by StartupWMClass and by id, so most native apps
@@ -107,14 +144,16 @@ Item {
   // under nothing a window class can reach; the URL in Exec is the one field
   // left, and the browser derives the window class from that URL's host, so the
   // host joins the two.
-  property var webappEntries: ({})
+  property var webappEntries: Object.create(null)
 
   // Built once per summon, not once per window group: resolveClass runs for
   // every group and this is a pass over the whole entry list. Rebuilding it on
   // each summon rather than once at load keeps a web app installed since the
   // shell started from needing a restart to be named.
   function indexWebappEntries() {
-    var index = ({})
+    // No prototype, for the same reason as Model.buildGroups: the lookup key
+    // comes from a window class.
+    var index = Object.create(null)
     var entries = []
     try { entries = DesktopEntries.applications.values || [] } catch (e) { entries = [] }
     for (var i = 0; i < entries.length; i++) {
@@ -148,8 +187,21 @@ Item {
     return null
   }
 
-  function applyClients(raw) {
-    var windows = Model.parseClients(raw)
+  // True when the last reply was no description of the session at all; the
+  // empty state names that instead of claiming there are no windows.
+  property bool loadFailed: false
+
+  function applyClients(raw, exitCode, exitStatus) {
+    var windows = (exitCode === 0 && exitStatus === 0) ? Model.parseClients(raw) : null
+    root.loadFailed = windows === null
+    if (root.loadFailed) {
+      // Cut off at the size bound, timed out, not JSON, or hyprctl itself
+      // failing. The overlay still opens on it, so there is something on
+      // screen to dismiss.
+      console.warn("jump-to: hyprctl clients gave no usable reply (exit " + exitCode + "/"
+                   + exitStatus + ", " + String(raw || "").length + " chars)")
+      windows = []
+    }
     root.groups = Model.buildGroups(windows, root.resolveClass)
     root.loaded = true
     // A drilled-into app whose last window just closed has nowhere to be.
@@ -314,13 +366,25 @@ Item {
 
   // -------------------------------------------------------------- plumbing
 
+  // hyprctl's reply grows with every window's title and class, both of which
+  // a client sets for itself, and it returns only once Hyprland answers.
+  // Neither is left open-ended: the reply is cut off at Model.MAX_REPLY_BYTES
+  // and a compositor that does not answer in time is given up on, so a stuck
+  // or flooding session cannot pin the shell's memory or this overlay. A cut
+  // reply is not JSON and a timeout is exit 124; applyClients treats both as
+  // no answer.
   property Process clientsProc: Process {
-    command: ["hyprctl", "clients", "-j"]
+    property int serial: 0
+    command: ["bash", "-c",
+      "set -o pipefail; timeout -k 1 5 hyprctl clients -j | head -c " + Model.MAX_REPLY_BYTES]
     stdout: StdioCollector {
       id: clientsOut
       waitForEnd: true
     }
-    onExited: root.applyClients(clientsOut.text || "[]")
+    onExited: function (exitCode, exitStatus) {
+      root.finishClients(clientsOut.text, exitCode, exitStatus)
+    }
+    onRunningChanged: if (!running) Qt.callLater(function () { root.checkClientsStarted() })
   }
 
   // A window closing or being renamed behind the overlay would otherwise leave
@@ -568,7 +632,8 @@ Item {
             anchors.top: parent.top
             anchors.topMargin: Style.space(14)
             visible: displayModel.count === 0
-            text: root.filterText ? "No window matches" : "No open windows"
+            text: root.loadFailed ? "Could not list windows"
+                : root.filterText ? "No window matches" : "No open windows"
             color: root.foreground
             opacity: 0.52
             font.family: root.fontFamily

@@ -73,8 +73,9 @@ plugin.
 Nothing outside the plugin's own directory is written or modified. The menu row
 and the keybind below are yours to add, and yours to remove.
 
-Beyond Omarchy itself the plugin shells out to `hyprctl` and `bash`, both of
-which a working Omarchy install already has.
+Beyond Omarchy itself the plugin shells out to `hyprctl`, `bash` and
+coreutils (`timeout`, `head`), all of which a working Omarchy install already
+has.
 
 ### Remove it
 
