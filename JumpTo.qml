@@ -184,7 +184,9 @@ Item {
     // name.
     var browser = root.browserEntry(cls)
     if (browser) return { name: "", icon: browser.icon }
-    return null
+    // Nothing names this class, so the class itself stands in as the icon
+    // name, once Model.iconName has made sure it is a name and not a path.
+    return { name: "", icon: Model.iconName(cls) }
   }
 
   // True when the last reply was no description of the session at all; the
@@ -282,7 +284,9 @@ Item {
 
   function focusAddress(address) {
     var target = String(address || "")
-    if (!target) return
+    // The address is the only text that reaches the shell, and the dispatcher
+    // line it lands in is Lua source; Model.js says what shape it may have.
+    if (!Model.isWindowAddress(target)) return
     // Hyprland's config language is Lua from 0.52 on. hyprctl exits 0 even when
     // it rejects a dispatcher, so the fallback to the classic syntax keys off
     // the reply text instead of the exit status.
@@ -324,6 +328,7 @@ Item {
   // workspace ahead of the window; the focus that follows is what takes you
   // there.
   function moveToWorkspace(address, workspace) {
+    if (!Model.isWindowAddress(address) || !Model.isWorkspaceNumber(workspace)) return
     Quickshell.execDetached(["bash", "-c",
       'out=$(hyprctl dispatch "hl.dsp.window.move({ workspace = $2, window = \\"address:$1\\", follow = false })" 2>&1); '
       + '[ "$out" = ok ] || hyprctl dispatch movetoworkspacesilent "$2,address:$1" >/dev/null 2>&1; '
@@ -388,19 +393,24 @@ Item {
   }
 
   // A window closing or being renamed behind the overlay would otherwise leave
-  // a row that jumps nowhere.
+  // a row that jumps nowhere. The timer is left to run out rather than
+  // restarted on every event: a window renaming itself faster than the
+  // interval would otherwise hold the reload off for as long as it kept it
+  // up, with the rows sitting stale behind it. This way the events can cause
+  // at most one reload per interval, however many of them arrive.
   Connections {
     target: Hyprland
     function onRawEvent(event) {
       if (!root.opened) return
       var name = String(event.name || "")
       if (name === "openwindow" || name === "closewindow" || name === "windowtitle"
-          || name === "windowtitlev2" || name === "movewindow" || name === "movewindowv2")
-        reloadDebounce.restart()
+          || name === "windowtitlev2" || name === "movewindow" || name === "movewindowv2") {
+        if (!reloadThrottle.running) reloadThrottle.start()
+      }
     }
   }
 
-  property Timer reloadDebounce: Timer {
+  property Timer reloadThrottle: Timer {
     interval: 80
     onTriggered: if (root.opened) root.reload()
   }

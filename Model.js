@@ -4,8 +4,13 @@
 // declarative, the way omarchy's own panels split Model.js from Panel.qml.
 
 // Browsers launch web apps under a class of "<browser>-<site>__-<profile>".
-var WEBAPP_CLASS = /^(brave|brave-browser|chromium|google-chrome|chrome|msedge|microsoft-edge|firefox|zen)-(.+?)(?:__.*)?$/
-var PROFILE_SUFFIX = /__-?.*$/
+// [\s\S] rather than `.` on purpose: `.` stops at a newline, and a class is
+// whatever the app chose to send, newlines included. With one in the class,
+// every `__` ahead of it sent the engine back over the rest of the string, a
+// quadratic scan that held the whole shell for seconds on a class of tens of
+// kilobytes, which is the size Hyprland lets a client send.
+var WEBAPP_CLASS = /^(brave|brave-browser|chromium|google-chrome|chrome|msedge|microsoft-edge|firefox|zen)-([\s\S]+?)(?:__[\s\S]*)?$/
+var PROFILE_SUFFIX = /__-?[\s\S]*$/
 // omarchy installs a web app as `Exec=omarchy-launch-webapp <url>`, which
 // reaches the browser as `--app=<url>`. Both forms name the URL the browser
 // then builds the window class from; any other Exec launches something that is
@@ -14,6 +19,21 @@ var WEBAPP_EXEC = /omarchy-launch-webapp|--app=/
 // Userinfo and port are left out of the capture: the class carries the host on
 // its own.
 var WEBAPP_EXEC_HOST = /https?:\/\/(?:[^\/@\s]*@)?([A-Za-z0-9.-]+)/
+// hyprctl names a window by its pointer, "0x" and lowercase hex, and that is
+// the one shape the dispatchers get handed. Everything else is refused before
+// it reaches a shell: under Hyprland's Lua config the dispatch argument is
+// evaluated as Lua source, where a stray quote would end the string literal
+// and leave the rest of the "address" running as code.
+var WINDOW_ADDRESS = /^0x[0-9a-f]{1,16}$/
+var WORKSPACE_NUMBER = /^[0-9]+$/
+
+function isWindowAddress(value) {
+  return WINDOW_ADDRESS.test(String(value || ""))
+}
+
+function isWorkspaceNumber(value) {
+  return WORKSPACE_NUMBER.test(String(value || ""))
+}
 
 // Bounds on what is taken from the compositor. A client names its own class
 // and title, and every window here ends up as a ListModel row laid out as
@@ -108,6 +128,18 @@ function browserOf(cls) {
   return webapp[1]
 }
 
+// The class stands in as the icon name when no desktop entry names the app.
+// The shell's icon lookup reads a leading "/" or a file:// or image:// prefix
+// as a place to load from rather than a name to look up, and a class is
+// whatever the app chose to call itself, so a name with a slash in it is
+// swapped for the generic icon the lookup falls back to for any name the
+// theme does not know. No real icon name has a slash in it.
+function iconName(cls) {
+  var value = String(cls || "")
+  if (!value || value.indexOf("/") !== -1) return "application-x-executable"
+  return value
+}
+
 // null when the reply is not a client list at all: cut off, empty, or not
 // JSON. The caller shows that as the failure it is rather than as a session
 // with no windows.
@@ -121,6 +153,10 @@ function parseClients(raw) {
     var c = list[i]
     if (!c) continue
     var address = field(c.address)
+    // A window address is a pointer Hyprland formats itself. It is the one
+    // field handed back to the compositor as text, inside a dispatcher call,
+    // so nothing shaped any other way is taken for one.
+    if (!isWindowAddress(address)) continue
     // An unmapped client has no surface to focus: Hyprland reports it while a
     // window is being torn down, and jumping to it does nothing.
     if (c.mapped === false) continue
