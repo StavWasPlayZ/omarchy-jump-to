@@ -70,8 +70,8 @@ Omarchy plugins run as unsandboxed code inside the long-lived `omarchy-shell`
 process. Read `JumpTo.qml` and `Model.js` before enabling this or any other
 plugin.
 
-Nothing outside the plugin's own directory is written or modified. The menu row
-and the keybind below are yours to add, and yours to remove.
+Nothing outside the plugin's own directory is written or modified. The menu
+row, the bar entry and the keybind below are yours to add, and yours to remove.
 
 Beyond Omarchy itself the plugin shells out to `hyprctl`, `bash` and
 coreutils (`timeout`, `head`), all of which a working Omarchy install already
@@ -84,8 +84,8 @@ omarchy plugin remove dev.cstav.omarchy.plugin.jump-to
 ```
 
 That deletes the plugin directory and drops its entry from `shell.json`. If you
-added the menu row or the keybind, delete those two blocks by hand: the plugin
-never wrote them, so it cannot take them back.
+added the menu row, the bar entry or the keybind, delete those by hand: the
+plugin never wrote them, so it cannot take them back.
 
 ### Add it to the Omarchy menu
 
@@ -104,6 +104,28 @@ Put a row in `~/.config/omarchy/extensions/omarchy-menu.jsonc`:
 The menu watches that file, so the row appears without a restart. It is an
 action row rather than a submenu, which is why it shows no chevron of its own:
 the Omarchy menu draws one only on rows that navigate inside the menu.
+
+### Add it to the bar
+
+The manifest also declares a `bar-widget` kind, so the switcher can sit in the
+bar as a button. Add an entry to a `bar.layout` section in
+`~/.config/omarchy/shell.json`:
+
+```jsonc
+"right": [
+  { "id": "omarchy.tray" },
+  { "id": "dev.cstav.omarchy.plugin.jump-to" },
+  // ...
+]
+```
+
+The shell hot-reloads `shell.json`, so the button appears without a restart.
+Left-click toggles the switcher, same as the keybind. Move it by editing the
+layout or with `omarchy bar move`.
+
+`omarchy bar put` and `omarchy plugin enable` will not add the button: the
+plugin is already enabled as an overlay through its `plugins[]` entry, and
+both commands stop there. The layout entry has to go in by hand.
 
 ### Bind a key
 
@@ -157,15 +179,18 @@ hl.layer_rule({ match = { namespace = "omarchy-jump-to" }, no_anim = true, anima
 
 The manifest sets `keepLoaded: true`, which keeps the overlay mounted between
 summons. The shell's file watcher logs a reload when a plugin file changes, but
-the mounted overlay goes on running the old QML. Run `omarchy restart shell` to
-pick up an edit.
+the mounted overlay goes on running the old QML, and a *new* file fails to load
+at all (the running QML engine has the directory listing cached and reports a
+spurious "File name case mismatch"). Run `omarchy restart shell` to pick up an
+edit.
 
 ## Files
 
 | File | Contents |
 |------|----------|
-| `manifest.json` | plugin manifest: an `overlay` kind with `JumpTo.qml` as its entry point |
+| `manifest.json` | plugin manifest: `overlay` and `bar-widget` kinds, with `JumpTo.qml` and `BarWidget.qml` as their entry points |
 | `JumpTo.qml` | the overlay window, key handling and row rendering |
+| `BarWidget.qml` | the bar button; toggles the overlay through the shell IPC |
 | `Model.js` | parsing `hyprctl clients`, grouping, naming and search ranking |
 
 ## License
